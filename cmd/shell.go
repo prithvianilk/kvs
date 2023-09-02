@@ -44,6 +44,16 @@ func main() {
 			if err != nil {
 				log.Printf("write failed: %v", err)
 			}
+		} else if cmd == "delete" {
+			var key string
+			_, err := fmt.Scanf("%s", &key)
+			if err != nil {
+				log.Fatalf("failed to read key: %v", err)
+			}
+			err = db.Delete([]byte(key))
+			if err != nil {
+				log.Printf("delete failed: %v", err)
+			}
 		} else {
 			log.Printf("invalid command: %v", cmd)
 		}

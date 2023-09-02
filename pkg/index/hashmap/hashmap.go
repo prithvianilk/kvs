@@ -28,6 +28,11 @@ func (index *HashMap) Get(key []byte) (int64, error) {
 	return offset, nil
 }
 
+func (index *HashMap) Delete(key []byte) error {
+	delete(index.keyToOffsetMap, string(key))
+	return nil
+}
+
 func (index *HashMap) Size() int {
 	return len(index.keyToOffsetMap)
 }

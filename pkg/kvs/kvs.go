@@ -22,6 +22,10 @@ type KVS struct {
 	index index.Index
 }
 
+type Metadata struct {
+	isTombstone bool
+}
+
 func New(fileName string) (*KVS, error) {
 	file, err := os.OpenFile(fileName, Flags, Perm)
 	if err != nil {
@@ -34,38 +38,66 @@ func New(fileName string) (*KVS, error) {
 	}
 
 	kvs := &KVS{file: file, index: hashmap.New()}
-	kvs.buildIndex()
+	if err := kvs.buildIndex(); err != nil {
+		return nil, err
+	}
 	return kvs, nil
 }
 
-func (kvs *KVS) buildIndex() {
+func (kvs *KVS) buildIndex() error {
 	offset := int64(0)
 	for {
 		keyOffset := offset
+
+		metadata, err := kvs.readMetadata(offset)
+		if err != nil {
+			return nil
+		}
+		offset += 1
+
 		keySize, err := kvs.readFieldSize(offset)
 		if err != nil {
-			break
+			return nil
 		}
 		offset += int64(FieldSizeInBytes)
 
 		keyAsBytes := make([]byte, keySize)
 		_, err = kvs.file.ReadAt(keyAsBytes, offset)
 		if err != nil {
-			break
+			return nil
 		}
 		offset += int64(keySize)
 
-		err = kvs.index.Set(keyAsBytes, keyOffset)
-		if err != nil {
-			panic(err)
+		if !metadata.isTombstone {
+			err = kvs.index.Set(keyAsBytes, keyOffset)
+			if err != nil {
+				return err
+			}
+		} else {
+			if err := kvs.index.Delete(keyAsBytes); err != nil {
+				return err
+			}
 		}
 
 		valueSize, err := kvs.readFieldSize(offset)
 		if err != nil {
-			break
+			return nil
 		}
 		offset += int64(FieldSizeInBytes + valueSize)
 	}
+}
+
+func (kvs *KVS) readMetadata(offset int64) (*Metadata, error) {
+	buffer := make([]byte, 1)
+	_, err := kvs.file.ReadAt(buffer, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	if buffer[0] == 0 {
+		return &Metadata{isTombstone: false}, nil
+	}
+	return &Metadata{isTombstone: true}, nil
 }
 
 func (kvs *KVS) Close() error {
@@ -83,10 +115,24 @@ func (kvs *KVS) Write(key, value []byte) error {
 		return err
 	}
 
+	if err := kvs.writeMetadata(&Metadata{isTombstone: false}); err != nil {
+		return err
+	}
+
 	if err := kvs.writeFieldWithSize(key); err != nil {
 		return err
 	}
+
 	return kvs.writeFieldWithSize(value)
+}
+
+func (kvs *KVS) writeMetadata(metadata *Metadata) error {
+	buffer := []byte{0}
+	if metadata.isTombstone {
+		buffer[0] = 1
+	}
+	_, err := kvs.file.Write(buffer)
+	return err
 }
 
 func (kvs *KVS) writeFieldWithSize(field []byte) error {
@@ -118,6 +164,7 @@ func (kvs *KVS) Read(key []byte) ([]byte, error) {
 		return nil, EntryNotFound
 	}
 
+	offset += 1
 	keySize, err := kvs.readFieldSize(offset)
 	if err != nil {
 		return nil, err
@@ -156,4 +203,24 @@ func (kvs *KVS) bytesToUint32(buffer []byte) uint32 {
 		num = num | mask
 	}
 	return num
+}
+
+func (kvs *KVS) Delete(key []byte) error {
+	_, err := kvs.index.Get(key)
+	if err != nil {
+		return EntryNotFound
+	}
+
+	if err := kvs.index.Delete(key); err != nil {
+		return err
+	}
+
+	if err := kvs.writeMetadata(&Metadata{isTombstone: true}); err != nil {
+		return err
+	}
+
+	if err := kvs.writeFieldWithSize(key); err != nil {
+		return err
+	}
+	return kvs.writeFieldWithSize([]byte{})
 }
