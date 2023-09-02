@@ -9,7 +9,7 @@ import (
 
 func main() {
 	fileName := os.Args[1]
-	kvs, err := kvs.New(fileName)
+	db, err := kvs.New(fileName)
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
@@ -27,7 +27,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("failed to read key: %v", err)
 			}
-			value, err := kvs.Read([]byte(key))
+			value, err := db.Read([]byte(key))
 			if err != nil {
 				log.Printf("read failed: %v", err)
 			} else {
@@ -39,7 +39,7 @@ func main() {
 				value string
 			)
 			_, err := fmt.Scanf("%s %s", &key, &value)
-			err = kvs.Write([]byte(key), []byte(value))
+			err = db.Write([]byte(key), []byte(value))
 			if err != nil {
 				log.Printf("write failed: %v", err)
 			}
