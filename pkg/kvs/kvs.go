@@ -6,6 +6,11 @@ import (
 	"os"
 )
 
+const (
+	Flags = os.O_RDWR | os.O_CREATE
+	Perm  = 0600
+)
+
 var EntryNotFound = errors.New("entry not found")
 
 type KVS struct {
@@ -13,11 +18,16 @@ type KVS struct {
 }
 
 func New(fileName string) (*KVS, error) {
-	// TODO: Start writing from EOF instead
-	file, err := os.Create(fileName)
+	file, err := os.OpenFile(fileName, Flags, Perm)
 	if err != nil {
 		return nil, err
 	}
+
+	_, err = file.Seek(0, 2)
+	if err != nil {
+		return nil, err
+	}
+
 	kvs := &KVS{file: file}
 	return kvs, nil
 }
