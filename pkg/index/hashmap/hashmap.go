@@ -1,6 +1,9 @@
 package hashmap
 
-import "errors"
+import (
+	"errors"
+	"kvs/pkg/index"
+)
 
 var ErrKeyNotInMap = errors.New("key not present in map")
 
@@ -8,7 +11,7 @@ type HashMap struct {
 	keyToOffsetMap map[string]int64
 }
 
-func New() *HashMap {
+func New() index.Index {
 	return &HashMap{keyToOffsetMap: map[string]int64{}}
 }
 
@@ -23,4 +26,8 @@ func (index *HashMap) Get(key []byte) (int64, error) {
 		return 0, ErrKeyNotInMap
 	}
 	return offset, nil
+}
+
+func (index *HashMap) Size() int {
+	return len(index.keyToOffsetMap)
 }
