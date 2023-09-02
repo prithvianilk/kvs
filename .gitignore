@@ -1,6 +1,7 @@
 # goland
 .idea/
 
-# pkg
+# kvs
+shell
 test.db
 
