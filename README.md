@@ -1,16 +1,17 @@
-# KVS
+# kvs
 
 - My second attempt at writing a simple key value store, indexed by a hashmap
-- We want to write key value pairs to a log, index them, then perform compaction
+- I want to write key value pairs to a log, index them, then perform compaction
+- Provide a leveldb / pebble like API
 
 ### API
 
 - Writes: ```kvs.Write(key, value)```
 - Reads: ```kvs.Read(key)```
 
-### Design
+### File format
 
-- Key value pairs will be stored in this format
+Key value pairs will be stored in this format
 
 ```text
 key's size (uint32)
@@ -23,5 +24,5 @@ value (value's size)
 
 - [x] Simple writes and reads from log file
 - [x] Hashmap index
-- [ ] Mock shell to write and read interactively
+- [x] Mock shell to write and read interactively
 - [ ] Compaction 
