@@ -15,7 +15,7 @@ const (
 	FieldSizeInBytes = 4
 )
 
-var EntryNotFound = errors.New("entry not found")
+var ErrEntryNotFound = errors.New("entry not found")
 
 type KVS struct {
 	file  *os.File
@@ -62,15 +62,13 @@ func (kvs *KVS) buildIndex() error {
 		offset += int64(FieldSizeInBytes)
 
 		keyAsBytes := make([]byte, keySize)
-		_, err = kvs.file.ReadAt(keyAsBytes, offset)
-		if err != nil {
+		if _, err = kvs.file.ReadAt(keyAsBytes, offset); err != nil {
 			return nil
 		}
 		offset += int64(keySize)
 
 		if !metadata.isTombstone {
-			err = kvs.index.Set(keyAsBytes, keyOffset)
-			if err != nil {
+			if err = kvs.index.Set(keyAsBytes, keyOffset); err != nil {
 				return err
 			}
 		} else {
@@ -89,8 +87,7 @@ func (kvs *KVS) buildIndex() error {
 
 func (kvs *KVS) readMetadata(offset int64) (*Metadata, error) {
 	buffer := make([]byte, 1)
-	_, err := kvs.file.ReadAt(buffer, offset)
-	if err != nil {
+	if _, err := kvs.file.ReadAt(buffer, offset); err != nil {
 		return nil, err
 	}
 
@@ -109,20 +106,15 @@ func (kvs *KVS) Write(key, value []byte) error {
 	if err != nil {
 		return err
 	}
-
-	err = kvs.index.Set(key, offset)
-	if err != nil {
+	if err = kvs.index.Set(key, offset); err != nil {
 		return err
 	}
-
 	if err := kvs.writeMetadata(&Metadata{isTombstone: false}); err != nil {
 		return err
 	}
-
 	if err := kvs.writeFieldWithSize(key); err != nil {
 		return err
 	}
-
 	return kvs.writeFieldWithSize(value)
 }
 
@@ -138,11 +130,10 @@ func (kvs *KVS) writeMetadata(metadata *Metadata) error {
 func (kvs *KVS) writeFieldWithSize(field []byte) error {
 	size := uint32(len(field))
 	sizeAsBytes := kvs.uint32ToBytes(size)
-	_, err := kvs.file.Write(sizeAsBytes)
-	if err != nil {
+	if _, err := kvs.file.Write(sizeAsBytes); err != nil {
 		return err
 	}
-	_, err = kvs.file.Write(field)
+	_, err := kvs.file.Write(field)
 	return err
 }
 
@@ -161,7 +152,7 @@ func (kvs *KVS) uint32ToBytes(num uint32) []byte {
 func (kvs *KVS) Read(key []byte) ([]byte, error) {
 	offset, err := kvs.index.Get(key)
 	if err != nil {
-		return nil, EntryNotFound
+		return nil, ErrEntryNotFound
 	}
 
 	offset += 1
@@ -178,8 +169,7 @@ func (kvs *KVS) Read(key []byte) ([]byte, error) {
 	offset += int64(FieldSizeInBytes)
 
 	valueAsBytes := make([]byte, valueSize)
-	_, err = kvs.file.ReadAt(valueAsBytes, offset)
-	if err != nil {
+	if _, err = kvs.file.ReadAt(valueAsBytes, offset); err != nil {
 		return nil, err
 	}
 
@@ -206,19 +196,15 @@ func (kvs *KVS) bytesToUint32(buffer []byte) uint32 {
 }
 
 func (kvs *KVS) Delete(key []byte) error {
-	_, err := kvs.index.Get(key)
-	if err != nil {
-		return EntryNotFound
+	if _, err := kvs.index.Get(key); err != nil {
+		return ErrEntryNotFound
 	}
-
 	if err := kvs.index.Delete(key); err != nil {
 		return err
 	}
-
 	if err := kvs.writeMetadata(&Metadata{isTombstone: true}); err != nil {
 		return err
 	}
-
 	if err := kvs.writeFieldWithSize(key); err != nil {
 		return err
 	}

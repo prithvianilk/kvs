@@ -95,7 +95,7 @@ func TestSimpleDelete(t *testing.T) {
 	newValue, err = db.Read(key)
 	if err == nil {
 		t.Fatalf("read succeeded, expected it to fail")
-	} else if err != EntryNotFound {
+	} else if err != ErrEntryNotFound {
 		t.Fatalf("read returned wrong error: %v", err)
 	} else if newValue != nil {
 		t.Fatalf("read failed but returned value: %v", value)
