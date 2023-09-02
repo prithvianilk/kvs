@@ -1,18 +1,18 @@
-package test
+package kvs
 
 import (
 	"bytes"
-	"kvs/pkg/kvs"
 	"os"
 	"testing"
 )
 
 func TestSimple(t *testing.T) {
 	fileName := "test.db"
-	db, err := kvs.New(fileName)
+	db, err := New(fileName)
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
+	defer db.Close()
 	defer os.Remove(fileName)
 
 	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")
@@ -29,12 +29,13 @@ func TestSimple(t *testing.T) {
 	}
 }
 
-func TestSimpleReWrite(t *testing.T) {
+func TestSimpleRewrite(t *testing.T) {
 	fileName := "test.db"
-	db, err := kvs.New(fileName)
+	db, err := New(fileName)
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
+	defer db.Close()
 	defer os.Remove(fileName)
 
 	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")

@@ -13,6 +13,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
+	defer db.Close()
 
 	for {
 		var cmd string

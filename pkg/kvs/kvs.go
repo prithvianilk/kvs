@@ -68,6 +68,10 @@ func (kvs *KVS) buildIndex() {
 	}
 }
 
+func (kvs *KVS) Close() error {
+	return kvs.file.Close()
+}
+
 func (kvs *KVS) Write(key, value []byte) error {
 	offset, err := kvs.file.Seek(0, io.SeekCurrent)
 	if err != nil {
