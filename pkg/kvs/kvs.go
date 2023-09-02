@@ -9,6 +9,8 @@ import (
 const (
 	Flags = os.O_RDWR | os.O_CREATE
 	Perm  = 0600
+
+	FieldSizeInBytes = 4
 )
 
 var EntryNotFound = errors.New("entry not found")
@@ -51,11 +53,13 @@ func (kvs *KVS) writeFieldWithSize(field []byte) error {
 }
 
 func (kvs *KVS) uint32ToBytes(num uint32) []byte {
-	bytes := make([]byte, 4)
+	bytes := make([]byte, FieldSizeInBytes)
 	mask := uint32((1 << 8) - 1)
-	for i := 0; i < 4; i++ {
-		bytes[(3 - i)] = byte(num & mask)
-		mask = mask << 4
+	for i := 0; i < FieldSizeInBytes; i++ {
+		indexFromEnd := FieldSizeInBytes - 1 - i
+		maskedNum := num & mask
+		bytes[indexFromEnd] = byte(maskedNum >> (8 * i))
+		mask = mask << 8
 	}
 	return bytes
 }
@@ -67,7 +71,7 @@ func (kvs *KVS) Read(key []byte) ([]byte, error) {
 		if err != nil {
 			return nil, kvs.mapError(err)
 		}
-		offset += int64(4)
+		offset += int64(FieldSizeInBytes)
 
 		keyAsBytes := make([]byte, keySize)
 		_, err = kvs.file.ReadAt(keyAsBytes, offset)
@@ -80,7 +84,7 @@ func (kvs *KVS) Read(key []byte) ([]byte, error) {
 		if err != nil {
 			return nil, kvs.mapError(err)
 		}
-		offset += int64(4)
+		offset += int64(FieldSizeInBytes)
 
 		valueAsBytes := make([]byte, valueSize)
 		_, err = kvs.file.ReadAt(valueAsBytes, offset)
@@ -103,7 +107,7 @@ func (kvs *KVS) mapError(err error) error {
 }
 
 func (kvs *KVS) readFieldSize(offset int64) (uint32, error) {
-	fieldSizeAsBytes := make([]byte, 4)
+	fieldSizeAsBytes := make([]byte, FieldSizeInBytes)
 	_, err := kvs.file.ReadAt(fieldSizeAsBytes, offset)
 	if err != nil {
 		return 0, err
@@ -113,9 +117,10 @@ func (kvs *KVS) readFieldSize(offset int64) (uint32, error) {
 
 func (kvs *KVS) bytesToUint32(buffer []byte) uint32 {
 	num := uint32(0)
-	for i := 0; i < 4; i++ {
-		b := uint32(buffer[3-i]) << i
-		num |= b
+	for i := 0; i < FieldSizeInBytes; i++ {
+		indexFromEnd := FieldSizeInBytes - 1 - i
+		mask := uint32(buffer[indexFromEnd]) << (8 * i)
+		num = num | mask
 	}
 	return num
 }
