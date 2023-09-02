@@ -3,6 +3,8 @@ package kvs
 import (
 	"errors"
 	"io"
+	"kvs/pkg/index"
+	"kvs/pkg/index/hashmap"
 	"os"
 )
 
@@ -16,7 +18,8 @@ const (
 var EntryNotFound = errors.New("entry not found")
 
 type KVS struct {
-	file *os.File
+	file  *os.File
+	index index.Index
 }
 
 func New(fileName string) (*KVS, error) {
@@ -30,11 +33,52 @@ func New(fileName string) (*KVS, error) {
 		return nil, err
 	}
 
-	kvs := &KVS{file: file}
+	kvs := &KVS{file: file, index: hashmap.New()}
+	kvs.buildIndex()
 	return kvs, nil
 }
 
+func (kvs *KVS) buildIndex() {
+	offset := int64(0)
+	for {
+		keyOffset := offset
+		keySize, err := kvs.readFieldSize(offset)
+		if err != nil {
+			break
+		}
+		offset += int64(FieldSizeInBytes)
+
+		keyAsBytes := make([]byte, keySize)
+		_, err = kvs.file.ReadAt(keyAsBytes, offset)
+		if err != nil {
+			break
+		}
+		offset += int64(keySize)
+
+		err = kvs.index.Set(keyAsBytes, keyOffset)
+		if err != nil {
+			panic(err)
+		}
+
+		valueSize, err := kvs.readFieldSize(offset)
+		if err != nil {
+			break
+		}
+		offset += int64(FieldSizeInBytes + valueSize)
+	}
+}
+
 func (kvs *KVS) Write(key, value []byte) error {
+	offset, err := kvs.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+
+	err = kvs.index.Set(key, offset)
+	if err != nil {
+		return err
+	}
+
 	if err := kvs.writeFieldWithSize(key); err != nil {
 		return err
 	}
@@ -53,57 +97,42 @@ func (kvs *KVS) writeFieldWithSize(field []byte) error {
 }
 
 func (kvs *KVS) uint32ToBytes(num uint32) []byte {
-	bytes := make([]byte, FieldSizeInBytes)
+	buffer := make([]byte, FieldSizeInBytes)
 	mask := uint32((1 << 8) - 1)
 	for i := 0; i < FieldSizeInBytes; i++ {
 		indexFromEnd := FieldSizeInBytes - 1 - i
 		maskedNum := num & mask
-		bytes[indexFromEnd] = byte(maskedNum >> (8 * i))
+		buffer[indexFromEnd] = byte(maskedNum >> (8 * i))
 		mask = mask << 8
 	}
-	return bytes
+	return buffer
 }
 
 func (kvs *KVS) Read(key []byte) ([]byte, error) {
-	offset := int64(0)
-	for {
-		keySize, err := kvs.readFieldSize(offset)
-		if err != nil {
-			return nil, kvs.mapError(err)
-		}
-		offset += int64(FieldSizeInBytes)
-
-		keyAsBytes := make([]byte, keySize)
-		_, err = kvs.file.ReadAt(keyAsBytes, offset)
-		if err != nil {
-			return nil, kvs.mapError(err)
-		}
-		offset += int64(keySize)
-
-		valueSize, err := kvs.readFieldSize(offset)
-		if err != nil {
-			return nil, kvs.mapError(err)
-		}
-		offset += int64(FieldSizeInBytes)
-
-		valueAsBytes := make([]byte, valueSize)
-		_, err = kvs.file.ReadAt(valueAsBytes, offset)
-		if err != nil {
-			return nil, kvs.mapError(err)
-		}
-		offset += int64(valueSize)
-
-		if isEqual(key, keyAsBytes) {
-			return valueAsBytes, nil
-		}
+	offset, err := kvs.index.Get(key)
+	if err != nil {
+		return nil, EntryNotFound
 	}
-}
 
-func (kvs *KVS) mapError(err error) error {
-	if err == io.EOF {
-		return EntryNotFound
+	keySize, err := kvs.readFieldSize(offset)
+	if err != nil {
+		return nil, err
 	}
-	return err
+	offset += int64(FieldSizeInBytes + keySize)
+
+	valueSize, err := kvs.readFieldSize(offset)
+	if err != nil {
+		return nil, err
+	}
+	offset += int64(FieldSizeInBytes)
+
+	valueAsBytes := make([]byte, valueSize)
+	_, err = kvs.file.ReadAt(valueAsBytes, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return valueAsBytes, nil
 }
 
 func (kvs *KVS) readFieldSize(offset int64) (uint32, error) {
@@ -123,17 +152,4 @@ func (kvs *KVS) bytesToUint32(buffer []byte) uint32 {
 		num = num | mask
 	}
 	return num
-}
-
-func isEqual(lhs, rhs []byte) bool {
-	if len(lhs) != len(rhs) {
-		return false
-	}
-
-	for i := 0; i < len(lhs); i++ {
-		if lhs[i] != rhs[i] {
-			return false
-		}
-	}
-	return true
 }

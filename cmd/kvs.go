@@ -34,4 +34,11 @@ func main() {
 	if err != nil {
 		log.Printf("Error: %v", err)
 	}
+
+	value, err = kvs.Read([]byte("dumb"))
+	if err != nil {
+		log.Printf("error: %v", err)
+	} else {
+		log.Println("found entry:", string(value))
+	}
 }
