@@ -1,0 +1,6 @@
+# goland
+.idea/
+
+# pkg
+test.db
+
