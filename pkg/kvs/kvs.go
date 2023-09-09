@@ -5,6 +5,7 @@ import (
 	"io"
 	"kvs/pkg/index"
 	"kvs/pkg/index/hashmap"
+	"kvs/pkg/rw_lock"
 	"os"
 	"time"
 )
@@ -24,6 +25,8 @@ var ErrEntryNotFound = errors.New("entry not found")
 type KVS struct {
 	file  *os.File
 	index index.Index
+
+	rwLock *rw_lock.ReaderWriterLock
 }
 
 type Metadata struct {
@@ -42,7 +45,7 @@ func New(fileName string) (*KVS, error) {
 		return nil, err
 	}
 
-	kvs := &KVS{file: file, index: hashmap.New()}
+	kvs := &KVS{file: file, index: hashmap.New(), rwLock: rw_lock.New()}
 	if err := kvs.buildIndex(); err != nil {
 		return nil, err
 	}
@@ -118,6 +121,8 @@ func (kvs *KVS) Close() error {
 }
 
 func (kvs *KVS) Write(key, value []byte) error {
+	kvs.rwLock.OnWrite()
+	defer kvs.rwLock.OnWriteEnd()
 	offset, err := kvs.file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
@@ -174,6 +179,8 @@ func (kvs *KVS) uint32ToBytes(num uint32) []byte {
 }
 
 func (kvs *KVS) Read(key []byte) ([]byte, error) {
+	kvs.rwLock.OnRead()
+	defer kvs.rwLock.OnReadEnd()
 	offset, err := kvs.index.Get(key)
 	if err != nil {
 		return nil, ErrEntryNotFound
@@ -220,6 +227,8 @@ func (kvs *KVS) bytesToUint32(buffer []byte) uint32 {
 }
 
 func (kvs *KVS) Delete(key []byte) error {
+	kvs.rwLock.OnWrite()
+	defer kvs.rwLock.OnWriteEnd()
 	if _, err := kvs.index.Get(key); err != nil {
 		return ErrEntryNotFound
 	}

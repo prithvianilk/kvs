@@ -32,4 +32,5 @@ metadata:
 - [x] Hashmap index
 - [x] Mock shell to write and read interactively
 - [x] Delete support with tombstones
+- [x] Make the writes and reads thread safe
 - [ ] Compaction 
