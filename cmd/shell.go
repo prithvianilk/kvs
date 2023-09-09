@@ -3,13 +3,14 @@ package main
 import (
 	"fmt"
 	"kvs/pkg/kvs"
+	"kvs/pkg/kvs/config"
 	"log"
 	"os"
 )
 
 func main() {
 	fileName := os.Args[1]
-	db, err := kvs.New(fileName)
+	db, err := kvs.New(config.Default(fileName))
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}

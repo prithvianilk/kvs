@@ -5,6 +5,7 @@ import (
 	"io"
 	"kvs/pkg/index"
 	"kvs/pkg/index/hashmap"
+	"kvs/pkg/kvs/config"
 	"kvs/pkg/rw_lock"
 	"os"
 	"time"
@@ -23,8 +24,9 @@ const (
 var ErrEntryNotFound = errors.New("entry not found")
 
 type KVS struct {
-	file  *os.File
-	index index.Index
+	config *config.Config
+	file   *os.File
+	index  index.Index
 
 	rwLock *rw_lock.ReaderWriterLock
 }
@@ -34,8 +36,8 @@ type Metadata struct {
 	timestamp   time.Time
 }
 
-func New(fileName string) (*KVS, error) {
-	file, err := os.OpenFile(fileName, Flags, Perm)
+func New(config *config.Config) (*KVS, error) {
+	file, err := os.OpenFile(config.DbName, Flags, Perm)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +47,12 @@ func New(fileName string) (*KVS, error) {
 		return nil, err
 	}
 
-	kvs := &KVS{file: file, index: hashmap.New(), rwLock: rw_lock.New()}
+	kvs := &KVS{
+		config: config,
+		file:   file,
+		index:  hashmap.New(),
+		rwLock: rw_lock.New(),
+	}
 	if err := kvs.buildIndex(); err != nil {
 		return nil, err
 	}

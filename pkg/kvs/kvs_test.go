@@ -2,6 +2,7 @@ package kvs
 
 import (
 	"bytes"
+	"kvs/pkg/kvs/config"
 	"os"
 	"testing"
 )
@@ -9,7 +10,7 @@ import (
 func TestSimple(t *testing.T) {
 	fileName := "test.db"
 	os.Remove(fileName)
-	db, err := New(fileName)
+	db, err := New(config.Default(fileName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestSimple(t *testing.T) {
 func TestSimpleRewrite(t *testing.T) {
 	fileName := "test.db"
 	os.Remove(fileName)
-	db, err := New(fileName)
+	db, err := New(config.Default(fileName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
@@ -70,7 +71,7 @@ func TestSimpleRewrite(t *testing.T) {
 func TestSimpleDelete(t *testing.T) {
 	fileName := "test.db"
 	os.Remove(fileName)
-	db, err := New(fileName)
+	db, err := New(config.Default(fileName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestSimpleDelete(t *testing.T) {
 func TestSimpleRestart(t *testing.T) {
 	fileName := "test.db"
 	os.Remove(fileName)
-	db, err := New(fileName)
+	db, err := New(config.Default(fileName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestSimpleRestart(t *testing.T) {
 	}
 	db.Close()
 
-	db, err = New(fileName)
+	db, err = New(config.Default(fileName))
 	defer db.Close()
 	newValue, err := db.Read(key)
 	if err != nil {
