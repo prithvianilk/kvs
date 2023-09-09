@@ -6,13 +6,17 @@ import (
 	"kvs/pkg/index"
 	"kvs/pkg/index/hashmap"
 	"os"
+	"time"
 )
 
 const (
 	Flags = os.O_RDWR | os.O_CREATE
 	Perm  = 0600
 
-	FieldSizeInBytes = 4
+	FieldSizeInBytes    = 4
+	MetadataSizeInBytes = 9
+
+	SingleByteMask = (1 << 8) - 1
 )
 
 var ErrEntryNotFound = errors.New("entry not found")
@@ -24,6 +28,7 @@ type KVS struct {
 
 type Metadata struct {
 	isTombstone bool
+	timestamp   time.Time
 }
 
 func New(fileName string) (*KVS, error) {
@@ -53,7 +58,7 @@ func (kvs *KVS) buildIndex() error {
 		if err != nil {
 			return nil
 		}
-		offset += 1
+		offset += MetadataSizeInBytes
 
 		keySize, err := kvs.readFieldSize(offset)
 		if err != nil {
@@ -86,15 +91,26 @@ func (kvs *KVS) buildIndex() error {
 }
 
 func (kvs *KVS) readMetadata(offset int64) (*Metadata, error) {
-	buffer := make([]byte, 1)
+	buffer := make([]byte, 9)
 	if _, err := kvs.file.ReadAt(buffer, offset); err != nil {
 		return nil, err
 	}
 
-	if buffer[0] == 0 {
-		return &Metadata{isTombstone: false}, nil
+	isTombstone := false
+	if buffer[0] == 1 {
+		isTombstone = true
 	}
-	return &Metadata{isTombstone: true}, nil
+
+	timestamp := int64(0)
+	for i := 0; i < 8; i++ {
+		currentByte := buffer[i+1]
+		timestamp |= int64(currentByte) << (8 * i)
+	}
+
+	return &Metadata{
+		isTombstone: isTombstone,
+		timestamp:   time.Unix(timestamp, 0),
+	}, nil
 }
 
 func (kvs *KVS) Close() error {
@@ -109,7 +125,7 @@ func (kvs *KVS) Write(key, value []byte) error {
 	if err = kvs.index.Set(key, offset); err != nil {
 		return err
 	}
-	if err := kvs.writeMetadata(&Metadata{isTombstone: false}); err != nil {
+	if err := kvs.writeMetadata(&Metadata{isTombstone: false, timestamp: time.Now()}); err != nil {
 		return err
 	}
 	if err := kvs.writeFieldWithSize(key); err != nil {
@@ -119,9 +135,17 @@ func (kvs *KVS) Write(key, value []byte) error {
 }
 
 func (kvs *KVS) writeMetadata(metadata *Metadata) error {
-	buffer := []byte{0}
+	buffer := make([]byte, 9)
+	buffer[0] = 0
 	if metadata.isTombstone {
 		buffer[0] = 1
+	}
+	timestampInSecs := metadata.timestamp.Unix()
+	mask := int64(SingleByteMask)
+	for i := 0; i < 8; i++ {
+		currentByte := (timestampInSecs & mask) >> (8 * i)
+		buffer[i+1] = byte(currentByte)
+		mask = mask << 8
 	}
 	_, err := kvs.file.Write(buffer)
 	return err
@@ -139,7 +163,7 @@ func (kvs *KVS) writeFieldWithSize(field []byte) error {
 
 func (kvs *KVS) uint32ToBytes(num uint32) []byte {
 	buffer := make([]byte, FieldSizeInBytes)
-	mask := uint32((1 << 8) - 1)
+	mask := uint32(SingleByteMask)
 	for i := 0; i < FieldSizeInBytes; i++ {
 		indexFromEnd := FieldSizeInBytes - 1 - i
 		maskedNum := num & mask
@@ -155,7 +179,7 @@ func (kvs *KVS) Read(key []byte) ([]byte, error) {
 		return nil, ErrEntryNotFound
 	}
 
-	offset += 1
+	offset += MetadataSizeInBytes
 	keySize, err := kvs.readFieldSize(offset)
 	if err != nil {
 		return nil, err
@@ -202,7 +226,7 @@ func (kvs *KVS) Delete(key []byte) error {
 	if err := kvs.index.Delete(key); err != nil {
 		return err
 	}
-	if err := kvs.writeMetadata(&Metadata{isTombstone: true}); err != nil {
+	if err := kvs.writeMetadata(&Metadata{isTombstone: true, timestamp: time.Now()}); err != nil {
 		return err
 	}
 	if err := kvs.writeFieldWithSize(key); err != nil {

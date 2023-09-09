@@ -8,6 +8,7 @@ import (
 
 func TestSimple(t *testing.T) {
 	fileName := "test.db"
+	os.Remove(fileName)
 	db, err := New(fileName)
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
@@ -31,6 +32,7 @@ func TestSimple(t *testing.T) {
 
 func TestSimpleRewrite(t *testing.T) {
 	fileName := "test.db"
+	os.Remove(fileName)
 	db, err := New(fileName)
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
@@ -67,6 +69,7 @@ func TestSimpleRewrite(t *testing.T) {
 
 func TestSimpleDelete(t *testing.T) {
 	fileName := "test.db"
+	os.Remove(fileName)
 	db, err := New(fileName)
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
@@ -99,5 +102,31 @@ func TestSimpleDelete(t *testing.T) {
 		t.Fatalf("read returned wrong error: %v", err)
 	} else if newValue != nil {
 		t.Fatalf("read failed but returned value: %v", value)
+	}
+}
+
+func TestSimpleRestart(t *testing.T) {
+	fileName := "test.db"
+	os.Remove(fileName)
+	db, err := New(fileName)
+	if err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	defer os.Remove(fileName)
+
+	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")
+	err = db.Write(key, value)
+	if err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	db.Close()
+
+	db, err = New(fileName)
+	defer db.Close()
+	newValue, err := db.Read(key)
+	if err != nil {
+		t.Fatalf("read failed %v", err)
+	} else if !bytes.Equal(value, newValue) {
+		t.Fatalf("values not equal: %v != %v", value, newValue)
 	}
 }

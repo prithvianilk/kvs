@@ -14,11 +14,16 @@
 Key value pairs will be stored in this format
 
 ```text
-metadata (1 byte)
+metadata (9 bytes)
 key's size (uint32, 4 bytes)
 key (key's size bytes)
 value's size (uint32, 4 bytes)
 value (value's size bytes)
+
+
+metadata:
+1 byte :- is this record a tombstone?
+8 bytes :- timestamp
 ```
 
 ### TODOs
