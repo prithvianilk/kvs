@@ -70,16 +70,21 @@ func New(config *config.Config) (*KVS, error) {
 		}
 	}
 
-	currentFileName, err := getCurrentFileName(files)
-	if err != nil {
-		return nil, err
+	var currentFileName string
+	if len(files) == 0 {
+		currentFileName = time.Now().Format(time.RFC3339)
+		filePath := config.DbName + "/" + currentFileName
+		f, err := os.OpenFile(filePath, Flags, Perm)
+		if err != nil {
+			return nil, err
+		}
+		filePathToFileMap[filePath] = f
+	} else {
+		currentFileName, err = getLatestFileName(files)
+		if err != nil {
+			return nil, err
+		}
 	}
-	filePath := config.DbName + "/" + currentFileName
-	f, err := os.OpenFile(filePath, Flags, Perm)
-	if err != nil {
-		return nil, err
-	}
-	filePathToFileMap[filePath] = f
 
 	kvs := &KVS{
 		config:              config,
@@ -90,13 +95,6 @@ func New(config *config.Config) (*KVS, error) {
 		currentFileName:     currentFileName,
 	}
 	return kvs, nil
-}
-
-func getCurrentFileName(files []fs.FileInfo) (string, error) {
-	if len(files) == 0 {
-		return time.Now().Format(time.RFC3339), nil
-	}
-	return getLatestFileName(files)
 }
 
 func getLatestFileName(files []fs.FileInfo) (string, error) {
