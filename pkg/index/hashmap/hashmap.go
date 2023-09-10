@@ -8,24 +8,24 @@ import (
 var ErrKeyNotInMap = errors.New("key not present in map")
 
 type HashMap struct {
-	keyToOffsetMap map[string]int64
+	keyToOffsetMap map[string]*index.Value
 }
 
 func New() index.Index {
-	return &HashMap{keyToOffsetMap: map[string]int64{}}
+	return &HashMap{keyToOffsetMap: map[string]*index.Value{}}
 }
 
-func (index *HashMap) Set(key []byte, offset int64) error {
-	index.keyToOffsetMap[string(key)] = offset
+func (index *HashMap) Set(key []byte, value *index.Value) error {
+	index.keyToOffsetMap[string(key)] = value
 	return nil
 }
 
-func (index *HashMap) Get(key []byte) (int64, error) {
-	offset, ok := index.keyToOffsetMap[string(key)]
+func (index *HashMap) Get(key []byte) (*index.Value, error) {
+	value, ok := index.keyToOffsetMap[string(key)]
 	if !ok {
-		return 0, ErrKeyNotInMap
+		return nil, ErrKeyNotInMap
 	}
-	return offset, nil
+	return value, nil
 }
 
 func (index *HashMap) Delete(key []byte) error {

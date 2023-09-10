@@ -3,6 +3,8 @@ package kvs
 import (
 	"errors"
 	"io"
+	"io/fs"
+	"io/ioutil"
 	"kvs/pkg/index"
 	"kvs/pkg/index/hashmap"
 	"kvs/pkg/kvs/config"
@@ -24,11 +26,12 @@ const (
 var ErrEntryNotFound = errors.New("entry not found")
 
 type KVS struct {
-	config *config.Config
-	file   *os.File
-	index  index.Index
-
-	rwLock *rw_lock.ReaderWriterLock
+	config              *config.Config
+	index               index.Index
+	rwLock              *rw_lock.ReaderWriterLock
+	filePathToFileMap   map[string]*os.File
+	headFileSizeInBytes int
+	currentFileName     string
 }
 
 type Metadata struct {
@@ -37,62 +40,114 @@ type Metadata struct {
 }
 
 func New(config *config.Config) (*KVS, error) {
-	file, err := os.OpenFile(config.DbName, Flags, Perm)
+	if err := os.Mkdir(config.DbName, os.ModePerm); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+
+	files, err := ioutil.ReadDir(config.DbName)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = file.Seek(0, 2)
+	idx := hashmap.New()
+	filePathToFileMap := map[string]*os.File{}
+
+	for _, file := range files {
+		filePath := config.DbName + "/" + file.Name()
+		f, err := os.OpenFile(filePath, Flags, Perm)
+		if err != nil {
+			return nil, err
+		}
+
+		filePathToFileMap[filePath] = f
+
+		if _, err = f.Seek(0, 2); err != nil {
+			return nil, err
+		}
+
+		if err := buildIndex(f, idx); err != nil {
+			return nil, err
+		}
+	}
+
+	currentFileName, err := getCurrentFileName(files)
 	if err != nil {
 		return nil, err
 	}
+	filePath := config.DbName + "/" + currentFileName
+	f, err := os.OpenFile(filePath, Flags, Perm)
+	if err != nil {
+		return nil, err
+	}
+	filePathToFileMap[filePath] = f
 
 	kvs := &KVS{
-		config: config,
-		file:   file,
-		index:  hashmap.New(),
-		rwLock: rw_lock.New(),
-	}
-	if err := kvs.buildIndex(); err != nil {
-		return nil, err
+		config:              config,
+		filePathToFileMap:   filePathToFileMap,
+		index:               idx,
+		rwLock:              rw_lock.New(),
+		headFileSizeInBytes: 0,
+		currentFileName:     currentFileName,
 	}
 	return kvs, nil
 }
 
-func (kvs *KVS) buildIndex() error {
+func getCurrentFileName(files []fs.FileInfo) (string, error) {
+	if len(files) == 0 {
+		return time.Now().Format(time.RFC3339), nil
+	}
+	return getLatestFileName(files)
+}
+
+func getLatestFileName(files []fs.FileInfo) (string, error) {
+	fileName := ""
+	maxDuration := time.Now().Add(-time.Hour * 1e5)
+	for _, file := range files {
+		t, err := time.Parse(time.RFC3339, file.Name())
+		if err != nil {
+			return "", err
+		}
+		if t.After(maxDuration) {
+			fileName = file.Name()
+		}
+	}
+	return fileName, nil
+}
+
+func buildIndex(file *os.File, idx index.Index) error {
 	offset := int64(0)
 	for {
 		keyOffset := offset
 
-		metadata, err := kvs.readMetadata(offset)
+		metadata, err := readMetadata(file, offset)
 		if err != nil {
 			return nil
 		}
 		offset += MetadataSizeInBytes
 
-		keySize, err := kvs.readFieldSize(offset)
+		keySize, err := readFieldSize(file, offset)
 		if err != nil {
 			return nil
 		}
 		offset += int64(FieldSizeInBytes)
 
 		keyAsBytes := make([]byte, keySize)
-		if _, err = kvs.file.ReadAt(keyAsBytes, offset); err != nil {
+		if _, err = file.ReadAt(keyAsBytes, offset); err != nil {
 			return nil
 		}
 		offset += int64(keySize)
 
 		if !metadata.isTombstone {
-			if err = kvs.index.Set(keyAsBytes, keyOffset); err != nil {
+			if err = idx.Set(keyAsBytes, &index.Value{FilePath: file.Name(), Offset: keyOffset, Timestamp: metadata.timestamp}); err != nil {
 				return err
 			}
 		} else {
-			if err := kvs.index.Delete(keyAsBytes); err != nil {
+			if err := idx.Delete(keyAsBytes); err != nil {
 				return err
 			}
 		}
 
-		valueSize, err := kvs.readFieldSize(offset)
+		valueSize, err := readFieldSize(file, offset)
 		if err != nil {
 			return nil
 		}
@@ -100,9 +155,9 @@ func (kvs *KVS) buildIndex() error {
 	}
 }
 
-func (kvs *KVS) readMetadata(offset int64) (*Metadata, error) {
+func readMetadata(file *os.File, offset int64) (*Metadata, error) {
 	buffer := make([]byte, 9)
-	if _, err := kvs.file.ReadAt(buffer, offset); err != nil {
+	if _, err := file.ReadAt(buffer, offset); err != nil {
 		return nil, err
 	}
 
@@ -124,29 +179,47 @@ func (kvs *KVS) readMetadata(offset int64) (*Metadata, error) {
 }
 
 func (kvs *KVS) Close() error {
-	return kvs.file.Close()
+	for _, value := range kvs.filePathToFileMap {
+		value.Close()
+	}
+	return nil
+}
+
+func (kvs *KVS) getFile(fileName string) *os.File {
+	filePath := kvs.getFilePath(fileName)
+	return kvs.filePathToFileMap[filePath]
+}
+
+func (kvs *KVS) getFilePath(fileName string) string {
+	return kvs.config.DbName + "/" + fileName
 }
 
 func (kvs *KVS) Write(key, value []byte) error {
 	kvs.rwLock.OnWrite()
 	defer kvs.rwLock.OnWriteEnd()
-	offset, err := kvs.file.Seek(0, io.SeekCurrent)
+
+	file := kvs.getFile(kvs.currentFileName)
+	offset, err := file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}
-	if err = kvs.index.Set(key, offset); err != nil {
+
+	if err = kvs.index.Set(key, &index.Value{Offset: offset, FilePath: kvs.getFilePath(kvs.currentFileName), Timestamp: time.Now()}); err != nil {
 		return err
 	}
-	if err := kvs.writeMetadata(&Metadata{isTombstone: false, timestamp: time.Now()}); err != nil {
+	if err := kvs.writeMetadata(file, &Metadata{isTombstone: false, timestamp: time.Now()}); err != nil {
 		return err
 	}
-	if err := kvs.writeFieldWithSize(key); err != nil {
+	if err := kvs.writeFieldWithSize(file, key); err != nil {
 		return err
 	}
-	return kvs.writeFieldWithSize(value)
+	if err := kvs.writeFieldWithSize(file, value); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (kvs *KVS) writeMetadata(metadata *Metadata) error {
+func (kvs *KVS) writeMetadata(file *os.File, metadata *Metadata) error {
 	buffer := make([]byte, 9)
 	buffer[0] = 0
 	if metadata.isTombstone {
@@ -159,17 +232,17 @@ func (kvs *KVS) writeMetadata(metadata *Metadata) error {
 		buffer[i+1] = byte(currentByte)
 		mask = mask << 8
 	}
-	_, err := kvs.file.Write(buffer)
+	_, err := file.Write(buffer)
 	return err
 }
 
-func (kvs *KVS) writeFieldWithSize(field []byte) error {
+func (kvs *KVS) writeFieldWithSize(file *os.File, field []byte) error {
 	size := uint32(len(field))
 	sizeAsBytes := kvs.uint32ToBytes(size)
-	if _, err := kvs.file.Write(sizeAsBytes); err != nil {
+	if _, err := file.Write(sizeAsBytes); err != nil {
 		return err
 	}
-	_, err := kvs.file.Write(field)
+	_, err := file.Write(field)
 	return err
 }
 
@@ -188,42 +261,45 @@ func (kvs *KVS) uint32ToBytes(num uint32) []byte {
 func (kvs *KVS) Read(key []byte) ([]byte, error) {
 	kvs.rwLock.OnRead()
 	defer kvs.rwLock.OnReadEnd()
-	offset, err := kvs.index.Get(key)
+	value, err := kvs.index.Get(key)
 	if err != nil {
 		return nil, ErrEntryNotFound
 	}
 
+	offset := value.Offset
+	file := kvs.filePathToFileMap[value.FilePath]
+
 	offset += MetadataSizeInBytes
-	keySize, err := kvs.readFieldSize(offset)
+	keySize, err := readFieldSize(file, offset)
 	if err != nil {
 		return nil, err
 	}
 	offset += int64(FieldSizeInBytes + keySize)
 
-	valueSize, err := kvs.readFieldSize(offset)
+	valueSize, err := readFieldSize(file, offset)
 	if err != nil {
 		return nil, err
 	}
 	offset += int64(FieldSizeInBytes)
 
 	valueAsBytes := make([]byte, valueSize)
-	if _, err = kvs.file.ReadAt(valueAsBytes, offset); err != nil {
+	if _, err = file.ReadAt(valueAsBytes, offset); err != nil {
 		return nil, err
 	}
 
 	return valueAsBytes, nil
 }
 
-func (kvs *KVS) readFieldSize(offset int64) (uint32, error) {
+func readFieldSize(file *os.File, offset int64) (uint32, error) {
 	fieldSizeAsBytes := make([]byte, FieldSizeInBytes)
-	_, err := kvs.file.ReadAt(fieldSizeAsBytes, offset)
+	_, err := file.ReadAt(fieldSizeAsBytes, offset)
 	if err != nil {
 		return 0, err
 	}
-	return kvs.bytesToUint32(fieldSizeAsBytes), nil
+	return bytesToUint32(fieldSizeAsBytes), nil
 }
 
-func (kvs *KVS) bytesToUint32(buffer []byte) uint32 {
+func bytesToUint32(buffer []byte) uint32 {
 	num := uint32(0)
 	for i := 0; i < FieldSizeInBytes; i++ {
 		indexFromEnd := FieldSizeInBytes - 1 - i
@@ -236,17 +312,20 @@ func (kvs *KVS) bytesToUint32(buffer []byte) uint32 {
 func (kvs *KVS) Delete(key []byte) error {
 	kvs.rwLock.OnWrite()
 	defer kvs.rwLock.OnWriteEnd()
+
 	if _, err := kvs.index.Get(key); err != nil {
 		return ErrEntryNotFound
 	}
 	if err := kvs.index.Delete(key); err != nil {
 		return err
 	}
-	if err := kvs.writeMetadata(&Metadata{isTombstone: true, timestamp: time.Now()}); err != nil {
+
+	file := kvs.getFile(kvs.currentFileName)
+	if err := kvs.writeMetadata(file, &Metadata{isTombstone: true, timestamp: time.Now()}); err != nil {
 		return err
 	}
-	if err := kvs.writeFieldWithSize(key); err != nil {
+	if err := kvs.writeFieldWithSize(file, key); err != nil {
 		return err
 	}
-	return kvs.writeFieldWithSize([]byte{})
+	return kvs.writeFieldWithSize(file, []byte{})
 }

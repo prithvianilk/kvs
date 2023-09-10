@@ -26,6 +26,23 @@ metadata:
 8 bytes :- timestamp
 ```
 
+### Compaction strategy
+
+- The db will be stored in a directory `./<db_name>`
+- Within this directory, the main log file will always be named `HEAD`
+- Files that have not been touched by compaction will be of format `L_*`
+- Files that have been compacted will be of format `C_*`
+- The index will store a mapping of key -> (log file name, offset, timestamp)
+- The writer keeps writing to `HEAD`, and starts writing to a new file when it reaches
+  threshold `LogFileSizeThresholdInBytes`
+- A compaction worker thread runs occasionally and aims to concurrently compact all log files
+- The compaction worker finds all files other than `HEAD` and adds all keys to a new mapping.
+  This will not have all new data, since it does not include `HEAD`.
+- Once this is done, we write all key, value pairs to a new set of compaction files, with data from the newly created
+  mapping.
+- We finally lock the db for a temporary while to update the index and delete old files. To prevent us overwriting valid
+  data in the index, we use the timestamp to confirm if the new file and offset is the latest value
+
 ### TODOs
 
 - [x] Simple writes and reads from log file

@@ -2,13 +2,13 @@ package config
 
 var (
 	defaultLogFileSizeThresholdInBytes       = 5_000
-	defaultCompactionWorkerSleepTimeInMillis = 10_000
+	defaultCompactionWorkerSleepTimeInMillis = int64(10_000)
 )
 
 type Config struct {
 	DbName                            string
 	LogFileSizeThresholdInBytes       int
-	CompactionWorkerSleepTimeInMillis int
+	CompactionWorkerSleepTimeInMillis int64
 }
 
 func Default(dbName string) *Config {

@@ -8,14 +8,14 @@ import (
 )
 
 func TestSimple(t *testing.T) {
-	fileName := "test.db"
-	os.Remove(fileName)
-	db, err := New(config.Default(fileName))
+	dbName := "test.db"
+	os.RemoveAll(dbName)
+	db, err := New(config.Default(dbName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
 	defer db.Close()
-	defer os.Remove(fileName)
+	defer os.RemoveAll(dbName)
 
 	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")
 	err = db.Write(key, value)
@@ -32,14 +32,14 @@ func TestSimple(t *testing.T) {
 }
 
 func TestSimpleRewrite(t *testing.T) {
-	fileName := "test.db"
-	os.Remove(fileName)
-	db, err := New(config.Default(fileName))
+	dbName := "test.db"
+	os.RemoveAll(dbName)
+	db, err := New(config.Default(dbName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
 	defer db.Close()
-	defer os.Remove(fileName)
+	defer os.RemoveAll(dbName)
 
 	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")
 	err = db.Write(key, value)
@@ -69,14 +69,14 @@ func TestSimpleRewrite(t *testing.T) {
 }
 
 func TestSimpleDelete(t *testing.T) {
-	fileName := "test.db"
-	os.Remove(fileName)
-	db, err := New(config.Default(fileName))
+	dbName := "test.db"
+	os.RemoveAll(dbName)
+	db, err := New(config.Default(dbName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
 	defer db.Close()
-	defer os.Remove(fileName)
+	defer os.RemoveAll(dbName)
 
 	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")
 	err = db.Write(key, value)
@@ -107,13 +107,13 @@ func TestSimpleDelete(t *testing.T) {
 }
 
 func TestSimpleRestart(t *testing.T) {
-	fileName := "test.db"
-	os.Remove(fileName)
-	db, err := New(config.Default(fileName))
+	dbName := "test.db"
+	os.Remove(dbName)
+	db, err := New(config.Default(dbName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
-	defer os.Remove(fileName)
+	defer os.Remove(dbName)
 
 	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")
 	err = db.Write(key, value)
@@ -122,7 +122,7 @@ func TestSimpleRestart(t *testing.T) {
 	}
 	db.Close()
 
-	db, err = New(config.Default(fileName))
+	db, err = New(config.Default(dbName))
 	defer db.Close()
 	newValue, err := db.Read(key)
 	if err != nil {
