@@ -100,7 +100,7 @@ func getCurrentFileName(files []fs.FileInfo) (string, error) {
 }
 
 func getLatestFileName(files []fs.FileInfo) (string, error) {
-	fileName := ""
+	var fileName string
 	maxDuration := time.Now().Add(-time.Hour * 1e5)
 	for _, file := range files {
 		t, err := time.Parse(time.RFC3339, file.Name())
@@ -199,23 +199,49 @@ func (kvs *KVS) Write(key, value []byte) error {
 	defer kvs.rwLock.OnWriteEnd()
 
 	file := kvs.getFile(kvs.currentFileName)
-	offset, err := file.Seek(0, io.SeekCurrent)
+	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
 	}
 
-	if err = kvs.index.Set(key, &index.Value{Offset: offset, FilePath: kvs.getFilePath(kvs.currentFileName), Timestamp: time.Now()}); err != nil {
+	indexValue := &index.Value{Offset: offset, FilePath: kvs.getFilePath(kvs.currentFileName), Timestamp: time.Now()}
+	if err = kvs.index.Set(key, indexValue); err != nil {
 		return err
 	}
-	if err := kvs.writeMetadata(file, &Metadata{isTombstone: false, timestamp: time.Now()}); err != nil {
+
+	metadata := &Metadata{isTombstone: false, timestamp: time.Now()}
+	if err := kvs.writeMetadata(file, metadata); err != nil {
 		return err
 	}
+
 	if err := kvs.writeFieldWithSize(file, key); err != nil {
 		return err
 	}
 	if err := kvs.writeFieldWithSize(file, value); err != nil {
 		return err
 	}
+
+	kvs.headFileSizeInBytes += MetadataSizeInBytes + 4 + len(key) + 4 + len(value)
+	return kvs.handleHeadFileSizeThresholdBreach()
+}
+
+func (kvs *KVS) handleHeadFileSizeThresholdBreach() error {
+	isHeadFileSizeThresholdBreached := kvs.headFileSizeInBytes >= kvs.config.LogFileSizeThresholdInBytes
+	if isHeadFileSizeThresholdBreached {
+		return kvs.createNewHeadFile()
+	}
+	return nil
+}
+
+func (kvs *KVS) createNewHeadFile() error {
+	fileName := time.Now().Format(time.RFC3339)
+	filePath := kvs.config.DbName + "/" + fileName
+	f, err := os.OpenFile(filePath, Flags, Perm)
+	if err != nil {
+		return err
+	}
+	kvs.filePathToFileMap[filePath] = f
+	kvs.currentFileName = fileName
 	return nil
 }
 
@@ -327,5 +353,10 @@ func (kvs *KVS) Delete(key []byte) error {
 	if err := kvs.writeFieldWithSize(file, key); err != nil {
 		return err
 	}
-	return kvs.writeFieldWithSize(file, []byte{})
+	if err := kvs.writeFieldWithSize(file, []byte{}); err != nil {
+		return err
+	}
+
+	kvs.headFileSizeInBytes += MetadataSizeInBytes + 4 + len(key) + 4
+	return kvs.handleHeadFileSizeThresholdBreach()
 }

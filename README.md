@@ -26,7 +26,7 @@ metadata:
 8 bytes :- timestamp
 ```
 
-### Compaction strategy
+### Compaction strategy (wip)
 
 - The db will be stored in a directory `./<db_name>`
 - Within this directory, the main log file will always be named `HEAD`

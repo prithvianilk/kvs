@@ -108,12 +108,12 @@ func TestSimpleDelete(t *testing.T) {
 
 func TestSimpleRestart(t *testing.T) {
 	dbName := "test.db"
-	os.Remove(dbName)
+	os.RemoveAll(dbName)
 	db, err := New(config.Default(dbName))
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
-	defer os.Remove(dbName)
+	defer os.RemoveAll(dbName)
 
 	key, value := []byte("key"), []byte("{ \"key\": \"value\" }")
 	err = db.Write(key, value)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"kvs/pkg/kvs"
 	"kvs/pkg/kvs/config"
@@ -9,8 +10,8 @@ import (
 )
 
 func main() {
-	fileName := os.Args[1]
-	db, err := kvs.New(config.Default(fileName))
+	cfg := getConfig()
+	db, err := kvs.New(cfg)
 	if err != nil {
 		log.Fatalf("init failed: %v", err)
 	}
@@ -20,7 +21,8 @@ func main() {
 		var cmd string
 		_, err := fmt.Scanf("%s", &cmd)
 		if err != nil {
-			log.Fatalf("command read failed: %v", err)
+			log.Printf("command read failed: %v", err)
+			continue
 		}
 
 		if cmd == "read" {
@@ -59,4 +61,14 @@ func main() {
 			log.Printf("invalid command: %v", cmd)
 		}
 	}
+}
+
+func getConfig() *config.Config {
+	cfg := &config.Config{}
+	flag.IntVar(&cfg.LogFileSizeThresholdInBytes, "max-log-size", config.DefaultLogFileSizeThresholdInBytes, "Log file size threshold")
+	flag.Int64Var(&cfg.CompactionWorkerSleepTimeInMillis, "compaction-sleep-time", config.DefaultCompactionWorkerSleepTimeInMillis, "")
+	flag.Parse()
+	dbName := os.Args[len(os.Args)-1]
+	cfg.DbName = dbName
+	return cfg
 }
