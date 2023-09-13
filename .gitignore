@@ -1,6 +1,9 @@
 # goland
 .idea/
 
+# macos
+.DS_Store
+
 # kvs
 kvs
 test.db
