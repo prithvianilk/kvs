@@ -36,3 +36,11 @@ func (index *HashMap) Delete(key []byte) error {
 func (index *HashMap) Size() int {
 	return len(index.keyToOffsetMap)
 }
+
+func (index *HashMap) Keys() [][]byte {
+	var keys [][]byte
+	for key, _ := range index.keyToOffsetMap {
+		keys = append(keys, []byte(key))
+	}
+	return keys
+}

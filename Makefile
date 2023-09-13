@@ -8,3 +8,4 @@ test:
 
 clean:
 	rm -rf ./shell
+	rm -rf ./test.db/*

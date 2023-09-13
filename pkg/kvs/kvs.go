@@ -2,6 +2,8 @@ package kvs
 
 import (
 	"errors"
+	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"io/fs"
 	"io/ioutil"
@@ -9,6 +11,7 @@ import (
 	"kvs/pkg/index/hashmap"
 	"kvs/pkg/kvs/config"
 	"kvs/pkg/rw_lock"
+	"log"
 	"os"
 	"time"
 )
@@ -31,7 +34,7 @@ type KVS struct {
 	rwLock              *rw_lock.ReaderWriterLock
 	filePathToFileMap   map[string]*os.File
 	headFileSizeInBytes int
-	currentFileName     string
+	headFileName        string
 }
 
 type Metadata struct {
@@ -70,17 +73,17 @@ func New(config *config.Config) (*KVS, error) {
 		}
 	}
 
-	var currentFileName string
+	var headFileName string
 	if len(files) == 0 {
-		currentFileName = time.Now().Format(time.RFC3339)
-		filePath := config.DbName + "/" + currentFileName
+		headFileName = uuid.New().String()
+		filePath := config.DbName + "/" + headFileName
 		f, err := os.OpenFile(filePath, Flags, Perm)
 		if err != nil {
 			return nil, err
 		}
 		filePathToFileMap[filePath] = f
 	} else {
-		currentFileName, err = getLatestFileName(files)
+		headFileName, err = getLatestFileName(files)
 		if err != nil {
 			return nil, err
 		}
@@ -92,24 +95,21 @@ func New(config *config.Config) (*KVS, error) {
 		index:               idx,
 		rwLock:              rw_lock.New(),
 		headFileSizeInBytes: 0,
-		currentFileName:     currentFileName,
+		headFileName:        headFileName,
 	}
+
+	go kvs.startCompactionWorker()
 	return kvs, nil
 }
 
 func getLatestFileName(files []fs.FileInfo) (string, error) {
-	var fileName string
-	maxDuration := time.Now().Add(-time.Hour * 1e5)
+	latestFile := files[0]
 	for _, file := range files {
-		t, err := time.Parse(time.RFC3339, file.Name())
-		if err != nil {
-			return "", err
-		}
-		if t.After(maxDuration) {
-			fileName = file.Name()
+		if file.ModTime().After(latestFile.ModTime()) {
+			latestFile = file
 		}
 	}
-	return fileName, nil
+	return latestFile.Name(), nil
 }
 
 func buildIndex(file *os.File, idx index.Index) error {
@@ -151,6 +151,147 @@ func buildIndex(file *os.File, idx index.Index) error {
 		}
 		offset += int64(FieldSizeInBytes + valueSize)
 	}
+}
+
+func (kvs *KVS) startCompactionWorker() {
+	duration := time.Duration(kvs.config.CompactionWorkerSleepTimeInMillis) * time.Millisecond
+	ticker := time.NewTicker(duration)
+	for range ticker.C {
+		if err := kvs.compact(); err != nil {
+			log.Printf("error during compaction: %v", err)
+		}
+	}
+}
+
+func (kvs *KVS) compact() error {
+	kvs.rwLock.OnWrite()
+	defer kvs.rwLock.OnWriteEnd()
+
+	if len(kvs.filePathToFileMap) <= 1 {
+		return nil
+	}
+
+	var (
+		compactionHeadFilePath string
+		compactionHeadFile     *os.File
+		compactionFiles        []*os.File
+
+		compactionHeadOffset = int64(0)
+	)
+
+	for _, key := range kvs.index.Keys() {
+		isHeadFileSizeThresholdBreached := int(compactionHeadOffset) >= kvs.config.LogFileSizeThresholdInBytes
+		if isHeadFileSizeThresholdBreached || compactionHeadFile == nil {
+			compactionHeadFileName := uuid.New().String()
+			compactionHeadFilePath = kvs.getFilePath(compactionHeadFileName)
+			file, err := os.OpenFile(compactionHeadFilePath, Flags, Perm)
+			if err != nil {
+				return err
+			}
+			compactionHeadFile = file
+			compactionFiles = append(compactionFiles, compactionHeadFile)
+			compactionHeadOffset = 0
+		}
+
+		indexValue, err := kvs.index.Get(key)
+		if err != nil {
+			return err
+		}
+
+		if indexValue.FilePath == kvs.getFilePath(kvs.headFileName) {
+			continue
+		}
+
+		file, ok := kvs.filePathToFileMap[indexValue.FilePath]
+		if !ok {
+			return fmt.Errorf("file not found for file path: %v", indexValue.FilePath)
+		}
+
+		compactionKeyOffset := compactionHeadOffset
+		offset := indexValue.Offset
+
+		metadata, err := readMetadata(file, offset)
+		if err != nil {
+			return err
+		}
+		compactionHeadOffset += MetadataSizeInBytes
+		offset += MetadataSizeInBytes
+
+		keySize, err := readFieldSize(file, offset)
+		if err != nil {
+			return err
+		}
+		compactionHeadOffset += FieldSizeInBytes
+		offset += FieldSizeInBytes
+
+		keyAsBytes := make([]byte, keySize)
+		if _, err = file.ReadAt(keyAsBytes, offset); err != nil {
+			return err
+		}
+		compactionHeadOffset += int64(keySize)
+		offset += int64(keySize)
+
+		valueSize, err := readFieldSize(file, offset)
+		if err != nil {
+			return err
+		}
+		compactionHeadOffset += FieldSizeInBytes
+		offset += FieldSizeInBytes
+
+		value := make([]byte, valueSize)
+		if _, err = file.ReadAt(value, offset); err != nil {
+			return err
+		}
+		compactionHeadOffset += int64(valueSize)
+
+		indexValue.Offset = compactionKeyOffset
+		indexValue.FilePath = compactionHeadFilePath
+		if err := writeMetadata(compactionHeadFile, metadata); err != nil {
+			return err
+		}
+		if err := writeFieldWithSize(compactionHeadFile, key); err != nil {
+			return err
+		}
+		if err := writeFieldWithSize(compactionHeadFile, value); err != nil {
+			return err
+		}
+		if err = kvs.index.Delete(key); err != nil {
+			return err
+		}
+		if err = kvs.index.Set(key, indexValue); err != nil {
+			return err
+		}
+	}
+
+	files, err := ioutil.ReadDir(kvs.config.DbName)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		filePath := kvs.getFilePath(file.Name())
+		if filePath == kvs.getFilePath(kvs.headFileName) {
+			continue
+		}
+
+		f, ok := kvs.filePathToFileMap[filePath]
+		if !ok {
+			continue
+		}
+		if err = f.Close(); err != nil {
+			return err
+		}
+		delete(kvs.filePathToFileMap, filePath)
+		if err := os.Remove(filePath); err != nil {
+			return err
+		}
+	}
+
+	for _, file := range compactionFiles {
+		kvs.filePathToFileMap[file.Name()] = file
+	}
+
+	return nil
 }
 
 func readMetadata(file *os.File, offset int64) (*Metadata, error) {
@@ -196,30 +337,29 @@ func (kvs *KVS) Write(key, value []byte) error {
 	kvs.rwLock.OnWrite()
 	defer kvs.rwLock.OnWriteEnd()
 
-	file := kvs.getFile(kvs.currentFileName)
+	file := kvs.getFile(kvs.headFileName)
 	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
 	}
 
-	indexValue := &index.Value{Offset: offset, FilePath: kvs.getFilePath(kvs.currentFileName), Timestamp: time.Now()}
+	indexValue := &index.Value{Offset: offset, FilePath: kvs.getFilePath(kvs.headFileName), Timestamp: time.Now()}
 	if err = kvs.index.Set(key, indexValue); err != nil {
 		return err
 	}
 
 	metadata := &Metadata{isTombstone: false, timestamp: time.Now()}
-	if err := kvs.writeMetadata(file, metadata); err != nil {
+	if err := writeMetadata(file, metadata); err != nil {
+		return err
+	}
+	if err := writeFieldWithSize(file, key); err != nil {
+		return err
+	}
+	if err := writeFieldWithSize(file, value); err != nil {
 		return err
 	}
 
-	if err := kvs.writeFieldWithSize(file, key); err != nil {
-		return err
-	}
-	if err := kvs.writeFieldWithSize(file, value); err != nil {
-		return err
-	}
-
-	kvs.headFileSizeInBytes += MetadataSizeInBytes + 4 + len(key) + 4 + len(value)
+	kvs.headFileSizeInBytes += MetadataSizeInBytes + FieldSizeInBytes + len(key) + FieldSizeInBytes + len(value)
 	return kvs.handleHeadFileSizeThresholdBreach()
 }
 
@@ -232,18 +372,19 @@ func (kvs *KVS) handleHeadFileSizeThresholdBreach() error {
 }
 
 func (kvs *KVS) createNewHeadFile() error {
-	fileName := time.Now().Format(time.RFC3339)
-	filePath := kvs.config.DbName + "/" + fileName
+	fileName := uuid.NewString()
+	filePath := kvs.getFilePath(fileName)
 	f, err := os.OpenFile(filePath, Flags, Perm)
 	if err != nil {
 		return err
 	}
 	kvs.filePathToFileMap[filePath] = f
-	kvs.currentFileName = fileName
+	kvs.headFileName = fileName
+	kvs.headFileSizeInBytes = 0
 	return nil
 }
 
-func (kvs *KVS) writeMetadata(file *os.File, metadata *Metadata) error {
+func writeMetadata(file *os.File, metadata *Metadata) error {
 	buffer := make([]byte, 9)
 	buffer[0] = 0
 	if metadata.isTombstone {
@@ -260,9 +401,9 @@ func (kvs *KVS) writeMetadata(file *os.File, metadata *Metadata) error {
 	return err
 }
 
-func (kvs *KVS) writeFieldWithSize(file *os.File, field []byte) error {
+func writeFieldWithSize(file *os.File, field []byte) error {
 	size := uint32(len(field))
-	sizeAsBytes := kvs.uint32ToBytes(size)
+	sizeAsBytes := uint32ToBytes(size)
 	if _, err := file.Write(sizeAsBytes); err != nil {
 		return err
 	}
@@ -270,7 +411,7 @@ func (kvs *KVS) writeFieldWithSize(file *os.File, field []byte) error {
 	return err
 }
 
-func (kvs *KVS) uint32ToBytes(num uint32) []byte {
+func uint32ToBytes(num uint32) []byte {
 	buffer := make([]byte, FieldSizeInBytes)
 	mask := uint32(SingleByteMask)
 	for i := 0; i < FieldSizeInBytes; i++ {
@@ -316,8 +457,7 @@ func (kvs *KVS) Read(key []byte) ([]byte, error) {
 
 func readFieldSize(file *os.File, offset int64) (uint32, error) {
 	fieldSizeAsBytes := make([]byte, FieldSizeInBytes)
-	_, err := file.ReadAt(fieldSizeAsBytes, offset)
-	if err != nil {
+	if _, err := file.ReadAt(fieldSizeAsBytes, offset); err != nil {
 		return 0, err
 	}
 	return bytesToUint32(fieldSizeAsBytes), nil
@@ -344,14 +484,14 @@ func (kvs *KVS) Delete(key []byte) error {
 		return err
 	}
 
-	file := kvs.getFile(kvs.currentFileName)
-	if err := kvs.writeMetadata(file, &Metadata{isTombstone: true, timestamp: time.Now()}); err != nil {
+	file := kvs.getFile(kvs.headFileName)
+	if err := writeMetadata(file, &Metadata{isTombstone: true, timestamp: time.Now()}); err != nil {
 		return err
 	}
-	if err := kvs.writeFieldWithSize(file, key); err != nil {
+	if err := writeFieldWithSize(file, key); err != nil {
 		return err
 	}
-	if err := kvs.writeFieldWithSize(file, []byte{}); err != nil {
+	if err := writeFieldWithSize(file, []byte{}); err != nil {
 		return err
 	}
 

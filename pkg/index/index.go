@@ -7,6 +7,7 @@ type Index interface {
 	Get([]byte) (*Value, error)
 	Delete([]byte) error
 	Size() int
+	Keys() [][]byte
 }
 
 type Value struct {
