@@ -2,6 +2,6 @@
 .idea/
 
 # kvs
-shell
+kvs
 test.db
 

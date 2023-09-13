@@ -65,8 +65,18 @@ func main() {
 
 func getConfig() *config.Config {
 	cfg := &config.Config{}
-	flag.IntVar(&cfg.LogFileSizeThresholdInBytes, "max-log-size", config.DefaultLogFileSizeThresholdInBytes, "Log file size threshold")
-	flag.Int64Var(&cfg.CompactionWorkerSleepTimeInMillis, "compaction-sleep-time", config.DefaultCompactionWorkerSleepTimeInMillis, "")
+	flag.IntVar(
+		&cfg.LogFileSizeThresholdInBytes,
+		"max-log-size",
+		config.DefaultLogFileSizeThresholdInBytes,
+		"Log file size threshold in bytes",
+	)
+	flag.Int64Var(
+		&cfg.CompactionWorkerSleepTimeInMillis,
+		"compaction-sleep-time",
+		config.DefaultCompactionWorkerSleepTimeInMillis,
+		"Log file compaction worker sleep time in millis",
+	)
 	flag.Parse()
 	dbName := os.Args[len(os.Args)-1]
 	cfg.DbName = dbName
