@@ -13,6 +13,7 @@ import (
 	"kvs/pkg/rw_lock"
 	"log"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,7 @@ type KVS struct {
 	filePathToFileMap   map[string]*os.File
 	headFileSizeInBytes int
 	headFileName        string
+	filePathToMutexMap  map[string]*sync.Mutex
 }
 
 type Metadata struct {
@@ -96,6 +98,7 @@ func New(config *config.Config) (*KVS, error) {
 		rwLock:              rw_lock.New(),
 		headFileSizeInBytes: 0,
 		headFileName:        headFileName,
+		filePathToMutexMap:  map[string]*sync.Mutex{},
 	}
 
 	go kvs.startCompactionWorker()
@@ -426,10 +429,19 @@ func uint32ToBytes(num uint32) []byte {
 func (kvs *KVS) Read(key []byte) ([]byte, error) {
 	kvs.rwLock.OnRead()
 	defer kvs.rwLock.OnReadEnd()
+
 	value, err := kvs.index.Get(key)
 	if err != nil {
 		return nil, ErrEntryNotFound
 	}
+
+	fileMtx, ok := kvs.filePathToMutexMap[value.FilePath]
+	if !ok {
+		fileMtx = &sync.Mutex{}
+		kvs.filePathToMutexMap[value.FilePath] = fileMtx
+	}
+	fileMtx.Lock()
+	defer fileMtx.Unlock()
 
 	offset := value.Offset
 	file := kvs.filePathToFileMap[value.FilePath]
@@ -495,6 +507,6 @@ func (kvs *KVS) Delete(key []byte) error {
 		return err
 	}
 
-	kvs.headFileSizeInBytes += MetadataSizeInBytes + 4 + len(key) + 4
+	kvs.headFileSizeInBytes += MetadataSizeInBytes + FieldSizeInBytes + len(key) + FieldSizeInBytes
 	return kvs.handleHeadFileSizeThresholdBreach()
 }
