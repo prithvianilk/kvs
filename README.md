@@ -19,7 +19,7 @@ Usage of ./kvs <db_name>:
 
 - Writes: ```kvs.Write(key, value)```
 - Reads: ```kvs.Read(key)```
-- Reads: ```kvs.Delete(key)```
+- Deletes: ```kvs.Delete(key)```
 
 ### File format
 
